@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Maps Lead Finder</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">M</span>
+      <div>
+        <h1>Maps Lead Finder</h1>
+        <p>Auto-mode: click the extension icon to open Maps beside this panel and start scraping.</p>
+      </div>
+    </div>
+    <span class="badge">v1.0</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. Search settings</h2>
+      <div class="form-grid">
+        <label class="field field-wide">
+          <span>What are you looking for?</span>
+          <input id="query" type="text" list="queryPresets" value="Gym" placeholder="e.g. Gym, Restaurant, Barber" />
+          <datalist id="queryPresets">
+            <option value="Gym"></option>
+            <option value="Restaurant"></option>
+            <option value="Cafe"></option>
+            <option value="Barber"></option>
+            <option value="Dentist"></option>
+            <option value="Plumber"></option>
+            <option value="Personal trainer"></option>
+          </datalist>
+        </label>
+
+        <label class="field field-wide">
+          <span>Where?</span>
+          <input id="location" type="text" value="London, UK" placeholder="e.g. London, UK" />
+        </label>
+
+        <label class="field">
+          <span>Minimum rating</span>
+          <input id="minRating" type="number" min="0" max="5" step="0.1" value="4" />
+        </label>
+
+        <label class="field">
+          <span>Minimum reviews</span>
+          <input id="minReviews" type="number" min="0" step="1" value="50" />
+        </label>
+
+        <label class="field">
+          <span>Maximum results to scan</span>
+          <input id="maxResults" type="number" min="1" max="500" step="1" value="100" />
+        </label>
+
+        <label class="field">
+          <span>Sort results by</span>
+          <select id="sortBy">
+            <option value="reviews">Most reviews</option>
+            <option value="rating">Highest rating</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="checkbox-row">
+        <input id="verifyWebsites" type="checkbox" checked />
+        <span>
+          <strong>Verify website on every matched place</strong> (recommended, slower)
+          <small>Google Maps list cards do not show a website link, so the tool opens each matching place to check its detail panel. Turn this off only for a quick, unfiltered scan.</small>
+        </span>
+      </label>
+
+      <div class="actions">
+        <button id="startBtn" class="btn btn-primary" type="button">Start scraping</button>
+        <button id="cancelBtn" class="btn btn-ghost" type="button" disabled>Cancel</button>
+        <button id="openMapsBtn" class="btn btn-ghost" type="button">Open current search in Maps</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. Progress</h2>
+      <div class="status-row">
+        <span id="statusText" class="status-text">Ready.</span>
+        <span id="statusCount" class="status-count"></span>
+      </div>
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+      <ul id="log" class="log" aria-live="polite"></ul>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>3. Leads</h2>
+        <div class="export-actions">
+          <button id="exportXlsxBtn" class="btn btn-primary" type="button" disabled>Download Excel (.xlsx)</button>
+          <button id="exportCsvBtn" class="btn btn-ghost" type="button" disabled>Download CSV</button>
+        </div>
+      </div>
+
+      <div id="summary" class="summary"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Business</th><th>Category</th><th>Rating</th><th>Reviews</th>
+              <th>Phone</th><th>Address</th><th>Website</th><th>Map link</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody">
+            <tr><td colspan="9" class="empty">No leads yet. Run a search above.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="footnote">Maps Lead Finder by Saim Rauf. Keep scans modest and check leads before using them.</p>
+  </main>
+
+  <script src="utils.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
