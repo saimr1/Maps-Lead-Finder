@@ -570,4 +570,11 @@
   // Also handles a second icon click while the side panel is already open.
   chrome.storage.onChanged.addListener(function (changes, area) {
     if (area !== 'local' || !changes.autoStart || !changes.autoStart.newValue) return;
-    chrome.storage.local.get(
+    chrome.storage.local.get({ activeMapsTabId: null, lastOptions: null }, function (data) {
+      chrome.storage.local.set({ autoStart: false }, function () {});
+      runAuto(Object.assign({}, DEFAULTS, data.lastOptions || {}), data.activeMapsTabId);
+    });
+  });
+
+  autoInit();
+})();
