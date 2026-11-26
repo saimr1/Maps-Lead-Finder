@@ -233,7 +233,7 @@
       verifierTabs = [];
       for (var t = 0; t < batch.length; t++) {
         var tab = await new Promise(function (resolve) {
-          chrome.tabs.create({ url: 'about:blank', active: false }, function (created) { resolve(created); });
+          chrome.tabs.create({ url: 'about:blank', active: true }, function (created) { resolve(created); });
         });
         verifierTabs.push(tab.id);
       }

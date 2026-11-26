@@ -10,6 +10,8 @@
   var searchRunning = false;
   var cancelled = false;
 
+  document.documentElement.setAttribute('data-mlf-loaded', '1');
+
   function post(type, payload) {
     try {
       chrome.runtime.sendMessage(Object.assign({ type: type }, payload || {}), function () { void chrome.runtime.lastError; });
@@ -97,6 +99,8 @@
   async function reportPlace() {
     var loaded = await waitForDetail(5000);
     var website = loaded ? detectWebsite() : { has: null, url: '' };
+    document.documentElement.setAttribute('data-mlf-place', website.has === null ? 'unknown' : String(website.has));
+    console.log('[Maps Lead Finder] place reported:', location.href.slice(0, 80), 'website:', website.has);
     post('PLACE_INFO', {
       url: location.href,
       name: placeName(),
