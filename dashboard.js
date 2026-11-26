@@ -22,6 +22,10 @@
   var currentOptions = {};
   var watchdog = null;
   var readyWatchdog = null;
+  var candidates = [];
+  var verifierTabs = [];
+  var placeResolvers = {};
+  var verifyCancelled = false;
 
   var DEFAULTS = {
     query: 'Gym', location: 'London, UK', minRating: 4, minReviews: 50,
@@ -84,6 +88,10 @@
   function resetRun() {
     mapsTabId = null;
     leads = [];
+    candidates = [];
+    verifierTabs = [];
+    placeResolvers = {};
+    verifyCancelled = false;
     els.resultsBody.innerHTML = '';
     var tr = document.createElement('tr');
     var td = document.createElement('td');
@@ -146,6 +154,121 @@
     }
   }
 
+  function waitForPlaceInfo(tabId, timeoutMs) {
+    var started = Date.now();
+    return new Promise(function (resolve) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (!done) { done = true; delete placeResolvers[tabId]; resolve(null); }
+      }, timeoutMs || 9000);
+      placeResolvers[tabId] = {
+        started: started,
+        resolve: function (info) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          delete placeResolvers[tabId];
+          resolve(info);
+        }
+      };
+    });
+  }
+
+  function finishWithLeads(rows, stats, noWebsiteOnly) {
+    leads = U.filterAndSort ? U.filterAndSort(rows, {
+      minRating: currentOptions.minRating,
+      minReviews: currentOptions.minReviews,
+      sortBy: currentOptions.sortBy,
+      noWebsiteOnly: noWebsiteOnly !== false
+    }) : rows;
+    renderLeads(leads, stats || {});
+    setStatus(leads.length ? ('Done - ' + leads.length + ' leads found.') : 'Done - no matching leads.');
+    log('Website checks: ' + ((stats && stats.checkedWith) || 0) + ' with site, ' +
+        ((stats && stats.checkedWithout) || 0) + ' without site, ' +
+        ((stats && stats.unchecked) || 0) + ' not checked.');
+    setProgress(100);
+    els.exportXlsxBtn.disabled = leads.length === 0;
+    els.exportCsvBtn.disabled = leads.length === 0;
+    if (verifierTabs.length) {
+      chrome.tabs.remove(verifierTabs, function () { void chrome.runtime.lastError; });
+      verifierTabs = [];
+    }
+    placeResolvers = {};
+    finishRun();
+  }
+
+  async function verifyCandidates(stats) {
+    var poolSize = Math.min(4, candidates.length);
+    var counts = { withSite: 0, withoutSite: 0, unknown: 0 };
+
+    function checkOne(row, tabId) {
+      var started = Date.now();
+      return new Promise(function (resolve) {
+        chrome.tabs.update(tabId, { url: row.link }, function () {
+          waitForPlaceInfo(tabId, 10000).then(function (info) {
+            if (info && info.ts >= started) {
+              row.hasWebsite = info.hasWebsite;
+              row.websiteUrl = info.websiteUrl || '';
+              row.phone = info.phone || row.phone;
+              row.address = info.address || row.address;
+              row.websiteChecked = info.hasWebsite !== null;
+              if (info.hasWebsite === true) counts.withSite++;
+              else if (info.hasWebsite === false) counts.withoutSite++;
+              else counts.unknown++;
+            } else {
+              counts.unknown++;
+            }
+            resolve();
+          });
+        });
+      });
+    }
+
+    for (var start = 0; start < candidates.length && !verifyCancelled; start += poolSize) {
+      var batch = candidates.slice(start, start + poolSize);
+      var done = Math.min(start + poolSize, candidates.length);
+      setStatus('Checking websites ' + done + ' / ' + candidates.length);
+      setProgress(45 + 50 * (start / candidates.length));
+
+      verifierTabs = [];
+      for (var t = 0; t < batch.length; t++) {
+        var tab = await new Promise(function (resolve) {
+          chrome.tabs.create({ url: 'about:blank', active: false }, function (created) { resolve(created); });
+        });
+        verifierTabs.push(tab.id);
+      }
+
+      await Promise.all(batch.map(function (row, index) { return checkOne(row, verifierTabs[index]); }));
+
+      if (verifierTabs.length) {
+        chrome.tabs.remove(verifierTabs, function () { void chrome.runtime.lastError; });
+        verifierTabs = [];
+      }
+    }
+
+    stats = stats || {};
+    stats.checkedWith = counts.withSite;
+    stats.checkedWithout = counts.withoutSite;
+    stats.unchecked = counts.unknown;
+    finishWithLeads(candidates, stats, true);
+  }
+
+  function setCandidates(rows, options, stats) {
+    candidates = rows || [];
+    currentOptions = options || currentOptions;
+    if (candidates.length === 0) {
+      finishWithLeads([], stats, true);
+      return;
+    }
+    if (currentOptions.verifyWebsites === false) {
+      candidates.forEach(function (row) { row.hasWebsite = null; row.websiteChecked = false; });
+      finishWithLeads(candidates, stats, false);
+      return;
+    }
+    log('Checking websites for ' + candidates.length + ' places in a separate tab…');
+    verifyCandidates(stats);
+  }
+
   function startScrape() {
     var options = readOptions();
     if (!options.query && !options.location) {
@@ -167,6 +290,14 @@
     });
   }
 
+  chrome.tabs.onUpdated.addListener(function (tabId, changeInfo) {
+    if (changeInfo.status === 'complete' && verifierTabs.indexOf(tabId) !== -1) {
+      try {
+        chrome.tabs.sendMessage(tabId, { type: 'CHECK_PLACE' }, function () { void chrome.runtime.lastError; });
+      } catch (error) { /* ignore */ }
+    }
+  });
+
   function sendToMaps(type, payload) {
     if (mapsTabId == null) return;
     try {
@@ -185,6 +316,19 @@
         if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
         log('Google Maps page is ready.');
       }
+      return;
+    }
+
+    if (message.type === 'PLACE_INFO') {
+      if (sender.tab && placeResolvers[sender.tab.id] && message.ts >= placeResolvers[sender.tab.id].started) {
+        placeResolvers[sender.tab.id].resolve(message);
+      }
+      return;
+    }
+
+    if (message.type === 'CANDIDATES') {
+      if (mapsTabId == null || !sender.tab || sender.tab.id !== mapsTabId) return;
+      setCandidates(message.rows, message.options, message.stats);
       return;
     }
 
@@ -232,7 +376,9 @@
       var td = document.createElement('td');
       td.colSpan = 9;
       td.className = 'empty';
-      td.textContent = 'No businesses matched your filters. Try lowering the minimum reviews or rating.';
+      td.textContent = (stats && stats.checkedWith > 0 && !stats.checkedWithout)
+        ? 'Every checked place lists a website. Try another category or location.'
+        : 'No businesses matched your filters. Try lowering the minimum reviews or rating.';
       tr.appendChild(td);
       els.resultsBody.appendChild(tr);
     }
@@ -395,6 +541,8 @@
   els.startBtn.addEventListener('click', startScrape);
   els.cancelBtn.addEventListener('click', function () {
     sendToMaps('CANCEL', {});
+    verifyCancelled = true;
+    Object.keys(placeResolvers).forEach(function (tabId) { placeResolvers[tabId].resolve(null); });
     setStatus('Cancelling…');
     log('Cancel requested.');
   });
