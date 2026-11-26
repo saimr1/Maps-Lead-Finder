@@ -201,29 +201,6 @@
     var poolSize = Math.min(4, candidates.length);
     var counts = { withSite: 0, withoutSite: 0, unknown: 0 };
 
-    function checkOne(row, tabId) {
-      var started = Date.now();
-      return new Promise(function (resolve) {
-        chrome.tabs.update(tabId, { url: row.link }, function () {
-          waitForPlaceInfo(tabId, 10000).then(function (info) {
-            if (info && info.ts >= started) {
-              row.hasWebsite = info.hasWebsite;
-              row.websiteUrl = info.websiteUrl || '';
-              row.phone = info.phone || row.phone;
-              row.address = info.address || row.address;
-              row.websiteChecked = info.hasWebsite !== null;
-              if (info.hasWebsite === true) counts.withSite++;
-              else if (info.hasWebsite === false) counts.withoutSite++;
-              else counts.unknown++;
-            } else {
-              counts.unknown++;
-            }
-            resolve();
-          });
-        });
-      });
-    }
-
     for (var start = 0; start < candidates.length && !verifyCancelled; start += poolSize) {
       var batch = candidates.slice(start, start + poolSize);
       var done = Math.min(start + poolSize, candidates.length);
@@ -231,14 +208,20 @@
       setProgress(45 + 50 * (start / candidates.length));
 
       verifierTabs = [];
-      for (var t = 0; t < batch.length; t++) {
+      var tasks = batch.map(async function (row) {
         var tab = await new Promise(function (resolve) {
           chrome.tabs.create({ url: 'about:blank', active: true }, function (created) { resolve(created); });
         });
         verifierTabs.push(tab.id);
-      }
+        return checkPlace(row, tab.id);
+      });
 
-      await Promise.all(batch.map(function (row, index) { return checkOne(row, verifierTabs[index]); }));
+      var results = await Promise.all(tasks);
+      results.forEach(function (info) {
+        if (info && info.hasWebsite === true) counts.withSite++;
+        else if (info && info.hasWebsite === false) counts.withoutSite++;
+        else counts.unknown++;
+      });
 
       if (verifierTabs.length) {
         chrome.tabs.remove(verifierTabs, function () { void chrome.runtime.lastError; });
@@ -289,14 +272,6 @@
       pingAndStart(tab.id, options, 30);
     });
   }
-
-  chrome.tabs.onUpdated.addListener(function (tabId, changeInfo) {
-    if (changeInfo.status === 'complete' && verifierTabs.indexOf(tabId) !== -1) {
-      try {
-        chrome.tabs.sendMessage(tabId, { type: 'CHECK_PLACE' }, function () { void chrome.runtime.lastError; });
-      } catch (error) { /* ignore */ }
-    }
-  });
 
   function sendToMaps(type, payload) {
     if (mapsTabId == null) return;
@@ -595,11 +570,4 @@
   // Also handles a second icon click while the side panel is already open.
   chrome.storage.onChanged.addListener(function (changes, area) {
     if (area !== 'local' || !changes.autoStart || !changes.autoStart.newValue) return;
-    chrome.storage.local.get({ activeMapsTabId: null, lastOptions: null }, function (data) {
-      chrome.storage.local.set({ autoStart: false }, function () {});
-      runAuto(Object.assign({}, DEFAULTS, data.lastOptions || {}), data.activeMapsTabId);
-    });
-  });
-
-  autoInit();
-})();
+    chrome.storage.local.get(

@@ -96,12 +96,11 @@
     return clean(node ? node.innerText : document.title.replace(/\s*-\s*Google Maps.*$/, ''));
   }
 
-  async function reportPlace() {
+  async function inspectPlace() {
     var loaded = await waitForDetail(5000);
     var website = loaded ? detectWebsite() : { has: null, url: '' };
     document.documentElement.setAttribute('data-mlf-place', website.has === null ? 'unknown' : String(website.has));
-    console.log('[Maps Lead Finder] place reported:', location.href.slice(0, 80), 'website:', website.has);
-    post('PLACE_INFO', {
+    return {
       url: location.href,
       name: placeName(),
       hasWebsite: website.has,
@@ -109,7 +108,11 @@
       phone: loaded ? detectPhone() : '',
       address: loaded ? detectAddress() : '',
       ts: Date.now()
-    });
+    };
+  }
+
+  function reportPlace() {
+    inspectPlace().then(function (info) { post('PLACE_INFO', info); });
   }
 
   function getFeed() {
@@ -250,9 +253,9 @@
       return;
     }
     if (message.type === 'CHECK_PLACE') {
-      if (isPlacePage()) reportPlace();
-      sendResponse({ ok: true });
-      return;
+      if (!isPlacePage()) { sendResponse({ hasWebsite: null }); return; }
+      inspectPlace().then(function (info) { sendResponse(info); });
+      return true;
     }
     if (message.type === 'CANCEL') {
       cancelled = true;
