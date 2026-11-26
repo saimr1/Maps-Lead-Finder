@@ -209,15 +209,57 @@
     };
   }
 
+  function findAnchor(name) {
+    var anchors = Array.from(document.querySelectorAll('a.hfpxzc, a[href*="/maps/place/"]'));
+    return anchors.find(function (a) { return clean(a.getAttribute('aria-label')) === name; }) || null;
+  }
+
+  async function ensureAnchor(name, feed) {
+    for (var i = 0; i < 10; i++) {
+      var anchor = findAnchor(name);
+      if (anchor) return anchor;
+      if (feed) feed.scrollTop = feed.scrollHeight;
+      await sleep(300);
+    }
+    return null;
+  }
+
+  async function closePanel() {
+    var nodes = Array.from(document.querySelectorAll('button[aria-label], a[aria-label]'));
+    var back = nodes.find(function (node) { return /^(back|close)$/i.test(clean(node.getAttribute('aria-label'))); });
+    if (back) { back.click(); await sleep(300); return; }
+    if (location.href.indexOf('/place/') !== -1) history.back();
+  }
+
+  async function verifyInTab(rows, onProgress) {
+    var feed = getFeed();
+    for (var i = 0; i < rows.length; i++) {
+      if (cancelled) break;
+      var row = rows[i];
+      onProgress(i + 1, rows.length);
+      var anchor = await ensureAnchor(row.name, feed);
+      if (!anchor) continue;
+      anchor.click();
+      if (await waitForDetail(4000)) {
+        var info = await inspectPlace();
+        row.hasWebsite = info.hasWebsite;
+        row.websiteUrl = info.websiteUrl;
+        row.phone = info.phone || row.phone;
+        row.address = info.address || row.address;
+        row.websiteChecked = info.hasWebsite !== null;
+      }
+      await closePanel();
+      try { await waitForFeed(8000); } catch (error) { break; }
+      feed = getFeed();
+    }
+  }
+
   async function start(options) {
     if (isPlacePage()) {
-      post('CANDIDATES', {
-        rows: [parsePlacePage()].filter(function (row) {
-          return row.rating >= (Number(options.minRating) || 0) && row.reviews >= (Number(options.minReviews) || 0);
-        }),
-        options: options,
-        stats: { collected: 1, candidates: 1 }
+      var single = [parsePlacePage()].filter(function (row) {
+        return row.rating >= (Number(options.minRating) || 0) && row.reviews >= (Number(options.minReviews) || 0);
       });
+      post('DONE', { rows: single, stats: { collected: 1, candidates: single.length, leads: single.length }, message: 'Scan complete.' });
       return;
     }
 
@@ -239,10 +281,32 @@
         })
       : rows;
 
-    post('CANDIDATES', {
-      rows: candidates,
-      options: options,
-      stats: { collected: rows.length, candidates: candidates.length }
+    if (options.verifyWebsites !== false) {
+      await verifyInTab(candidates, function (done, total) {
+        post('PROGRESS', { phase: 'verifying', done: done, total: total, message: 'Checking website ' + done + ' / ' + total });
+      });
+    }
+
+    var leads = U.filterAndSort
+      ? U.filterAndSort(candidates, {
+          minRating: options.minRating,
+          minReviews: options.minReviews,
+          sortBy: options.sortBy,
+          noWebsiteOnly: options.verifyWebsites !== false
+        })
+      : candidates;
+
+    post('DONE', {
+      rows: leads,
+      stats: {
+        collected: rows.length,
+        candidates: candidates.length,
+        leads: leads.length,
+        checkedWith: candidates.filter(function (r) { return r.hasWebsite === true; }).length,
+        checkedWithout: candidates.filter(function (r) { return r.hasWebsite === false; }).length,
+        unchecked: candidates.filter(function (r) { return r.hasWebsite === null; }).length
+      },
+      message: 'Scan complete: ' + leads.length + ' leads found.'
     });
   }
 
